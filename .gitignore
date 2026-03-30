@@ -1,0 +1,14 @@
+node_modules/
+**/node_modules/
+.DS_Store
+dist/
+build/
+**/*.rs.bk
+*.pdb
+src-tauri/target/
+.env
+.env.local
+.vscode/
+.idea/
+*.lock
+bun.lock

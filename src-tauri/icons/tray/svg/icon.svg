@@ -1,0 +1,17 @@
+﻿<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="256" height="256">
+  <defs>
+    <clipPath id="rounded">
+      <rect x="0" y="0" width="24" height="24" rx="5" ry="5"/>
+    </clipPath>
+    <radialGradient id="bgGrad" cx="50%" cy="-5%" rx="100%" ry="55%">
+      <stop offset="0%"   stop-color="rgba(0,210,100,0.85)"/>
+      <stop offset="45%"  stop-color="rgba(0,130,70,0.55)"/>
+      <stop offset="100%" stop-color="rgba(7,11,18,0.95)"/>
+    </radialGradient>
+  </defs>
+  <g clip-path="url(#rounded)">
+    <rect x="0" y="0" width="24" height="24" fill="#070b12"/>
+    <rect x="0" y="0" width="24" height="24" fill="url(#bgGrad)"/>
+    <path d="M13 2L4.5 13.5H11L11 22L19.5 10.5H13L13 2Z" fill="white" fill-opacity="0.92"/>
+  </g>
+</svg>

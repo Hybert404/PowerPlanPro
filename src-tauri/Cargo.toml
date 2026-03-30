@@ -1,0 +1,23 @@
+[package]
+name = "power-plan-pro"
+version = "0.2.0"
+description = "Automatically switches Windows power plans based on CPU/GPU load"
+authors = ["@Hybert404"]
+license = "MIT"
+repository = ""
+edition = "2021"
+
+[build-dependencies]
+tauri-build = { version = "2.5.5", features = [] }
+
+[dependencies]
+tauri = { version = "2.10.2", features = ["tray-icon"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1"
+image = { version = "0.25", default-features = false, features = ["ico"] }
+winreg = "0.55"
+windows = { version = "0.62", features = ["Win32_System_Performance", "Win32_Foundation", "Win32_Globalization", "Win32_System_Threading", "Win32_Security"] }
+
+[[bin]]
+name = "power-plan-pro"
+path = "src/main.rs"
