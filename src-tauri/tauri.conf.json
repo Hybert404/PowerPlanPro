@@ -1,6 +1,6 @@
 {
   "productName": "Power Plan Pro",
-  "version": "0.2.0",
+  "version": "1.0.0",
   "identifier": "com.powerplanpro.desktop",
   "build": {
     "beforeDevCommand": "bun run dev",

@@ -93,7 +93,12 @@ impl UsageMonitor {
     }
 
     fn sample(&mut self) -> Result<UsageSnapshot, String> {
+        let collect_start = std::time::Instant::now();
         let collect_status = unsafe { PdhCollectQueryData(self.query) };
+        let collect_elapsed = collect_start.elapsed();
+        if collect_elapsed.as_millis() > 500 {
+            log::warn!("PdhCollectQueryData took {collect_elapsed:?} (possible bottleneck)");
+        }
         ensure_ok(collect_status, "collect PDH data")?;
 
         let cpu_usage = read_counter_value(self.cpu_counter).unwrap_or(0.0).clamp(0.0, 100.0);

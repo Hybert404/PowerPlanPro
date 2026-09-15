@@ -1,6 +1,6 @@
 [package]
 name = "power-plan-pro"
-version = "0.2.0"
+version = "1.0.0"
 description = "Automatically switches Windows power plans based on CPU/GPU load"
 authors = ["@Hybert404"]
 license = "MIT"

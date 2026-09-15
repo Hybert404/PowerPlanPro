@@ -1,6 +1,8 @@
 ﻿use serde::Serialize;
 use std::process::Command;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
+use std::time::{Duration, Instant};
 
 #[cfg(windows)]
 use std::os::windows::process::CommandExt;
@@ -74,40 +76,91 @@ impl PowerManager {
     }
 }
 
+const POWERCFG_TIMEOUT: Duration = Duration::from_secs(5);
+
+/// Global guard ensuring at most one `powercfg` subprocess runs at a time.
+/// Prevents system-wide power lock contention from stacking during rapid
+/// plan switches.
+static POWERCFG_RUNNING: AtomicBool = AtomicBool::new(false);
+
 fn run_powercfg<const N: usize>(args: [&str; N]) -> Result<String, String> {
+    if POWERCFG_RUNNING
+        .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
+        .is_err()
+    {
+        let msg = "powercfg already running — skipping".to_string();
+        log::warn!("{msg}");
+        return Err(msg);
+    }
+
+    let result = run_powercfg_inner(args);
+
+    POWERCFG_RUNNING.store(false, Ordering::SeqCst);
+    result
+}
+
+fn run_powercfg_inner<const N: usize>(args: [&str; N]) -> Result<String, String> {
     let mut command = Command::new("powercfg");
     #[cfg(windows)]
     {
         command.creation_flags(CREATE_NO_WINDOW);
     }
 
-    let output = command
+    let mut child = command
         .args(args)
-        .output()
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
         .map_err(|error| {
             let msg = format!("failed to execute powercfg: {error}");
             log::error!("{msg}");
             msg
         })?;
 
-    if !output.status.success() {
-        let stderr = decode_powercfg_text(&output.stderr);
-        let stdout = decode_powercfg_text(&output.stdout);
-        let msg = format!(
-            "powercfg failed (code {:?}): {}{}",
-            output.status.code(),
-            stdout.trim(),
-            if stderr.trim().is_empty() {
-                "".to_string()
-            } else {
-                format!(" | {}", stderr.trim())
+    let start = Instant::now();
+    loop {
+        match child.try_wait() {
+            Ok(Some(status)) => {
+                let output = child.wait_with_output().map_err(|error| {
+                    let msg = format!("failed to read powercfg output: {error}");
+                    log::error!("{msg}");
+                    msg
+                })?;
+                if !status.success() {
+                    let stderr = decode_powercfg_text(&output.stderr);
+                    let stdout = decode_powercfg_text(&output.stdout);
+                    let msg = format!(
+                        "powercfg failed (code {:?}): {}{}",
+                        status.code(),
+                        stdout.trim(),
+                        if stderr.trim().is_empty() {
+                            "".to_string()
+                        } else {
+                            format!(" | {}", stderr.trim())
+                        }
+                    );
+                    log::error!("{msg}");
+                    return Err(msg);
+                }
+                return Ok(decode_powercfg_text(&output.stdout));
             }
-        );
-        log::error!("{msg}");
-        return Err(msg);
+            Ok(None) => {
+                if start.elapsed() > POWERCFG_TIMEOUT {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    let msg = format!("powercfg timed out after {POWERCFG_TIMEOUT:?}");
+                    log::error!("{msg}");
+                    return Err(msg);
+                }
+                std::thread::sleep(Duration::from_millis(50));
+            }
+            Err(error) => {
+                let msg = format!("failed to wait for powercfg: {error}");
+                log::error!("{msg}");
+                return Err(msg);
+            }
+        }
     }
-
-    Ok(decode_powercfg_text(&output.stdout))
 }
 
 #[cfg(windows)]
@@ -199,24 +252,58 @@ fn is_guid(candidate: &str) -> bool {
 /// `powercfg /getactivescheme`. No admin required. Called every ~3 s so the
 /// subprocess overhead is negligible compared to the polling interval.
 pub fn get_active_guid_fast() -> Option<String> {
-    use std::os::windows::process::CommandExt;
+    // Guard: skip if another powercfg call is already running.
+    if POWERCFG_RUNNING
+        .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
+        .is_err()
+    {
+        log::debug!("get_active_guid_fast: skipped (powercfg busy)");
+        return None;
+    }
+
+    let result = get_active_guid_fast_inner();
+
+    POWERCFG_RUNNING.store(false, Ordering::SeqCst);
+    result
+}
+
+fn get_active_guid_fast_inner() -> Option<String> {
     const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 
-    let out = std::process::Command::new("powercfg")
+    let mut child = std::process::Command::new("powercfg")
         .arg("/getactivescheme")
         .creation_flags(CREATE_NO_WINDOW)
-        .output()
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::null())
+        .spawn()
         .ok()?;
 
-    // Output: "Power Scheme GUID: 381b4222-f694-41f0-9685-ff5bb260df2e  (Balanced)"
-    let text = String::from_utf8_lossy(&out.stdout);
-    for line in text.lines() {
-        if let Some(rest) = line.strip_prefix("Power Scheme GUID:") {
-            let rest = rest.trim();
-            if rest.len() >= 36 {
-                return Some(rest[..36].to_lowercase());
+    let start = Instant::now();
+    loop {
+        match child.try_wait() {
+            Ok(Some(_status)) => {
+                let output = child.wait_with_output().ok()?;
+                let text = String::from_utf8_lossy(&output.stdout);
+                for line in text.lines() {
+                    if let Some(rest) = line.strip_prefix("Power Scheme GUID:") {
+                        let rest = rest.trim();
+                        if rest.len() >= 36 {
+                            return Some(rest[..36].to_lowercase());
+                        }
+                    }
+                }
+                return None;
             }
+            Ok(None) => {
+                if start.elapsed() > POWERCFG_TIMEOUT {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    log::warn!("get_active_guid_fast: timed out");
+                    return None;
+                }
+                std::thread::sleep(Duration::from_millis(50));
+            }
+            Err(_) => return None,
         }
     }
-    None
 }

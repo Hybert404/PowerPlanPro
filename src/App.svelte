@@ -1,12 +1,14 @@
 <script lang="ts">
   import { invoke } from '@tauri-apps/api/core';
   import { getCurrentWindow } from '@tauri-apps/api/window';
+  import { getVersion } from '@tauri-apps/api/app';
   import { onMount } from 'svelte';
 
   const appWindow = getCurrentWindow();
 
   let highDropOpen = false;
   let lowDropOpen  = false;
+  let version = '';
 
   function selectHigh(guid: string) { config.highLoadPlanGuid = guid; highDropOpen = false; saveConfig(); }
   function selectLow(guid: string)  { config.lowLoadPlanGuid  = guid; lowDropOpen  = false; saveConfig(); }
@@ -346,6 +348,7 @@
   }
 
   onMount(() => {
+    getVersion().then((v) => { version = v; }).catch(() => {});
     loadInitialData().catch((error) => {
       errorText = error instanceof Error ? error.message : String(error);
     });
@@ -374,7 +377,7 @@
       <path d="M13 2L4.5 13.5H11L11 22L19.5 10.5H13L13 2Z" fill="currentColor" />
     </svg>
     <h1 data-tauri-drag-region>Power Plan Pro</h1>
-    <span class="version-chip" data-tauri-drag-region>v0.2</span>
+    <span class="version-chip" data-tauri-drag-region>v{version}</span>
   </div>
   <div class="header-right" data-tauri-drag-region>
     <div class="plan-badge plan-badge--{activeCategory}" data-tauri-drag-region>
@@ -585,8 +588,9 @@
     </div>
 
     <div class="actions">
-      <button class="btn" on:click={() => setPlan(config.highLoadPlanGuid)}>Apply High</button>
-      <button class="btn" on:click={() => setPlan(config.lowLoadPlanGuid)}>Apply Low</button>
+      {#each plans.slice(0, 3) as plan}
+        <button class="btn" on:click={() => setPlan(plan.guid)}>Apply {plan.name}</button>
+      {/each}
     </div>
 
     <!-- Pause Rule Engine -->

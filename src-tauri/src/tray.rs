@@ -1,6 +1,9 @@
 ﻿use crate::engine::AppCore;
 use crate::power::PowerPlan;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
+use std::thread;
+use std::time::{SystemTime, UNIX_EPOCH};
 use tauri::{
     image::Image,
     menu::{MenuBuilder, MenuItem},
@@ -14,6 +17,16 @@ const GUID_HIGH_PERF: &str = "8c5e7fda-e8bf-4a96-9a85-a6e23a8c635c";
 const GUID_ULTRA_PERF: &str = "e9a42b02-d5df-448d-aa00-03f14749eb61";
 
 static TRANSPARENT_PIXEL: [u8; 4] = [0, 0, 0, 0];
+
+static LAST_TRAY_UPDATE_MS: AtomicU64 = AtomicU64::new(0);
+const TRAY_DEBOUNCE_MS: u64 = 2000;
+
+fn now_ms() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0)
+}
 
 pub fn icon_filename_for_guid(guid: &str) -> &'static str {
     let lower = guid.to_lowercase();
@@ -105,13 +118,20 @@ pub fn create_tray(
                 }
             }
             "pause_15" => {
-                let _ = core.pause_engine(15);
+                let core = Arc::clone(&core);
+                thread::spawn(move || {
+                    let _ = core.pause_engine(15);
+                });
             }
             "quit" => app.exit(0),
             id => {
                 if let Some(guid) = id.strip_prefix("plan:") {
-                    let _ = core.set_power_plan(guid.to_string());
-                    // tray icon/tooltip updated via the on_plan_changed callback
+                    // Spawn on a background thread to avoid blocking the event loop.
+                    let core = Arc::clone(&core);
+                    let guid = guid.to_string();
+                    thread::spawn(move || {
+                        let _ = core.set_power_plan(guid);
+                    });
                 }
             }
         })
@@ -134,7 +154,18 @@ pub fn create_tray(
 }
 
 /// Called from the on_plan_changed callback registered in main.rs.
+/// Debounced: updates at most once per TRAY_DEBOUNCE_MS to avoid rapid
+/// IPC dispatches to the main thread.
 pub fn update_tray_icon(app: &AppHandle, guid: &str) {
+    let now = now_ms();
+    let last = LAST_TRAY_UPDATE_MS.load(Ordering::Relaxed);
+    if now.saturating_sub(last) < TRAY_DEBOUNCE_MS {
+        log::debug!("update_tray_icon: debounced ({:?}ms since last, skipping)",
+            now.saturating_sub(last));
+        return;
+    }
+    LAST_TRAY_UPDATE_MS.store(now, Ordering::Relaxed);
+
     let Some(tray) = app.tray_by_id("main_tray") else {
         log::warn!("tray icon not found, cannot update");
         return;

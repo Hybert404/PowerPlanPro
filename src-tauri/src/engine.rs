@@ -174,12 +174,16 @@ impl AppCore {
     /// power plan. Uses a direct registry read — no subprocess, negligible cost.
     /// Returns the new GUID if an external change is detected, else None.
     fn check_external_plan_change(&self) -> Option<String> {
-        let mut runtime = self.runtime.lock().ok()?;
-        runtime.tick_count = runtime.tick_count.wrapping_add(1);
-        if runtime.tick_count % 3 != 0 || runtime.active_plan_guid.is_empty() {
-            return None;
+        {
+            let mut runtime = self.runtime.lock().ok()?;
+            runtime.tick_count = runtime.tick_count.wrapping_add(1);
+            if runtime.tick_count % 3 != 0 || runtime.active_plan_guid.is_empty() {
+                return None;
+            }
         }
+        // Release the runtime lock before spawning the subprocess.
         let actual = crate::power::get_active_guid_fast()?;
+        let mut runtime = self.runtime.lock().ok()?;
         if actual.eq_ignore_ascii_case(&runtime.active_plan_guid) {
             return None;
         }
@@ -201,25 +205,22 @@ impl AppCore {
 
     pub fn set_power_plan(&self, plan_guid: String) -> Result<(), String> {
         // Global debounce: skip any switch within 2 seconds of the last one.
+        // Mark the switch as in-progress BEFORE calling powercfg so subsequent
+        // calls see the updated timestamp even while the subprocess is running.
         {
-            let runtime = self.runtime.lock().map_err(|_| "failed to lock engine runtime".to_string())?;
+            let mut runtime = self.runtime.lock().map_err(|_| "failed to lock engine runtime".to_string())?;
             let elapsed_ms = now_ms().saturating_sub(runtime.last_switch_ms);
             if elapsed_ms < 2000 {
                 log::debug!("set_power_plan: debounce active ({elapsed_ms}ms since last switch, ignoring)");
                 return Ok(());
             }
+            runtime.last_switch_ms = now_ms();
+            runtime.active_plan_guid = plan_guid.clone();
+            runtime.switches_count = runtime.switches_count.saturating_add(1);
         }
 
         log::debug!("setting active power plan to {plan_guid}");
         self.power.set_active_plan(&plan_guid)?;
-        let mut runtime = self
-            .runtime
-            .lock()
-            .map_err(|_| "failed to lock engine runtime".to_string())?;
-        runtime.active_plan_guid = plan_guid.clone();
-        runtime.last_switch_ms = now_ms();
-        runtime.switches_count = runtime.switches_count.saturating_add(1);
-        drop(runtime);
         self.fire_plan_changed(&plan_guid);
         Ok(())
     }
@@ -360,9 +361,25 @@ impl AppCore {
             return Ok(());
         }
 
-        if runtime.active_plan_guid.is_empty() {
-            runtime.active_plan_guid = self.power.get_active_plan_guid()?;
+        // Release the runtime lock before any subprocess calls.
+        let active_guid = runtime.active_plan_guid.clone();
+        drop(runtime);
+
+        if active_guid.is_empty() {
+            let discovered = self.power.get_active_plan_guid()?;
+            let mut runtime = self
+                .runtime
+                .lock()
+                .map_err(|_| "failed to lock engine runtime".to_string())?;
+            if runtime.active_plan_guid.is_empty() {
+                runtime.active_plan_guid = discovered;
+            }
         }
+
+        let mut runtime = self
+            .runtime
+            .lock()
+            .map_err(|_| "failed to lock engine runtime".to_string())?;
 
         if runtime.active_plan_guid.eq_ignore_ascii_case(&target_plan_guid) {
             return Ok(());
@@ -375,18 +392,14 @@ impl AppCore {
             }
         }
 
-        drop(runtime);
-        log::info!("switching power plan: {target_plan_guid} (cpu_avg={avg_cpu:.1}, gpu_avg={avg_gpu:.1})");
-        self.power.set_active_plan(&target_plan_guid)?;
-
-        let mut runtime = self
-            .runtime
-            .lock()
-            .map_err(|_| "failed to lock engine runtime".to_string())?;
+        // Mark the switch as in-progress BEFORE calling powercfg so the
+        // debounce guard works even while the subprocess is running.
         runtime.active_plan_guid = target_plan_guid.clone();
         runtime.last_switch_ms = now_ms();
         runtime.switches_count = runtime.switches_count.saturating_add(1);
         drop(runtime);
+        log::info!("switching power plan: {target_plan_guid} (cpu_avg={avg_cpu:.1}, gpu_avg={avg_gpu:.1})");
+        self.power.set_active_plan(&target_plan_guid)?;
 
         self.fire_plan_changed(&target_plan_guid);
         Ok(())
