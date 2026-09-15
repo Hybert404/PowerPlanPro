@@ -2,6 +2,7 @@
 
 mod autostart;
 mod engine;
+mod logging;
 mod metrics;
 mod persist;
 mod power;
@@ -33,7 +34,8 @@ fn acquire_single_instance_mutex() -> bool {
                 return false;
             }
             // Leak intentionally: mutex must stay held for the whole process lifetime.
-            std::mem::forget(h);
+            // HANDLE is Copy, so mem::forget is a no-op; `_` is sufficient to suppress the warning.
+            let _ = h;
             true
         }
         Err(_) => true, // If we can't create the mutex, allow startup anyway.
@@ -82,13 +84,30 @@ fn set_autostart(_app: tauri::AppHandle, enabled: bool) -> Result<(), String> {
     autostart::set_autostart(enabled, &exe)
 }
 
+#[tauri::command]
+fn pause_engine(state: State<'_, Arc<AppCore>>, minutes: u32) -> Result<(), String> {
+    state.inner().pause_engine(minutes)
+}
+
+#[tauri::command]
+fn unpause_engine(state: State<'_, Arc<AppCore>>) -> Result<(), String> {
+    state.inner().unpause_engine()
+}
+
 fn main() {
     if !acquire_single_instance_mutex() {
         // Another instance is already running — exit silently.
         return;
     }
 
-    let core = Arc::new(AppCore::new().expect("failed to initialize app core"));
+    let core = match AppCore::new() {
+        Ok(core) => Arc::new(core),
+        Err(e) => {
+            log::error!("failed to initialize app core: {e}");
+            eprintln!("failed to initialize app core: {e}");
+            return;
+        }
+    };
 
     tauri::Builder::default()
         .manage(Arc::clone(&core))
@@ -100,8 +119,16 @@ fn main() {
                 .path()
                 .app_data_dir()
                 .map_err(|e| format!("failed to resolve app data dir: {e}"))?;
+
+            // Initialize logging to file (after resolving data_dir).
+            logging::init(&data_dir);
+
+            log::info!("Power Plan Pro starting up");
+            log::info!("data directory: {}", data_dir.display());
+
             core.set_data_dir(data_dir.clone());
             if let Some(saved) = persist::load(&data_dir) {
+                log::info!("loaded persisted config from disk");
                 core.apply_persisted_config(saved);
             }
 
@@ -113,9 +140,7 @@ fn main() {
 
             // Create system tray with initial plan list and active plan.
             let plans = core.list_power_plans().unwrap_or_default();
-            let status = core
-                .get_engine_status()
-                .expect("failed to read initial engine status");
+            let status = core.get_engine_status().unwrap_or_default();
             tray::create_tray(&handle, Arc::clone(&core), &plans, &status.active_plan_guid)?;
 
             // Hide to tray instead of quitting when the window's close button is clicked.
@@ -138,6 +163,7 @@ fn main() {
                 let _ = window.hide();
             }
 
+            log::info!("app setup complete");
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -148,7 +174,9 @@ fn main() {
             set_rule_config,
             get_engine_status,
             get_autostart,
-            set_autostart
+            set_autostart,
+            pause_engine,
+            unpause_engine
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

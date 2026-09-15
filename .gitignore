@@ -1,14 +1,32 @@
 node_modules/
-**/node_modules/
-.DS_Store
 dist/
 build/
+
+# Rust
 **/*.rs.bk
 *.pdb
 src-tauri/target/
-.env
-.env.local
+
+# IDE
 .vscode/
 .idea/
-*.lock
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Env
+.env
+.env.local
+
+# Logs
+*.log
+
+# Lock files
 bun.lock
+
+# Dev tools (icon conversion)
+src-tauri/icons/tray/ImageMagick-*/
+
+# Agent config
+.opencode/

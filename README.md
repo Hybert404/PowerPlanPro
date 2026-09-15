@@ -19,13 +19,10 @@
 - 🖥️ **System tray integration** — runs quietly in the background with a tray icon that reflects the active power plan
 - 🪶 **Minimal resource usage** — lightweight native app with near-zero CPU and memory overhead at idle
 - 🔄 **External plan detection** — syncs state when you or another tool changes the active plan outside the app
+- ⏸️ **Pause rule engine** — temporarily pause automatic switching for 1–30 minutes, with a quick-access tray menu shortcut
 - 🚀 **Start with Windows** — optional autostart via the Windows registry
 
 ---
-
-## Screenshots
-
-> _Add screenshots here_
 
 ---
 
@@ -49,15 +46,11 @@ The entire app ships as a single native Windows executable with no Electron and 
 PowerPlanPro/
 ├── src/                            # Svelte frontend
 │   ├── App.svelte                  # Main UI (charts, state, IPC)
-│   ├── main.ts                     # Frontend entry point
-│   └── components/
-│       ├── CpuChart.svelte         # Canvas-based CPU usage graph
-│       ├── PowerPlanSelector.svelte # Manual plan switcher
-│       └── SettingsPanel.svelte    # Settings modal
+│   └── main.ts                     # Frontend entry point
 ├── src-tauri/                      # Rust backend
 │   └── src/
 │       ├── main.rs                 # App setup, IPC handlers, window lifecycle
-│       ├── engine.rs               # Rule engine (threshold logic, state machine)
+│       ├── engine.rs               # Rule engine (threshold logic, pause, state machine)
 │       ├── metrics.rs              # CPU/GPU sampling via Windows PDH
 │       ├── power.rs                # Power plan management via powercfg
 │       ├── tray.rs                 # System tray menu and icons
@@ -85,7 +78,7 @@ PowerPlanPro/
 ### 1. Clone the repository
 
 ```bash
-git clone https://github.com/your-username/PowerPlanPro.git
+git clone https://github.com/Hybert404/PowerPlanPro.git
 cd PowerPlanPro
 ```
 

@@ -40,6 +40,23 @@ pub struct EngineStatus {
     pub condition_met: bool,
     pub target_plan_guid: String,
     pub switches_count: u64,
+    pub paused: bool,
+    pub resume_at_ms: Option<u64>,
+}
+
+impl Default for EngineStatus {
+    fn default() -> Self {
+        Self {
+            active_plan_guid: String::new(),
+            avg_cpu: 0.0,
+            avg_gpu: 0.0,
+            condition_met: false,
+            target_plan_guid: String::new(),
+            switches_count: 0,
+            paused: false,
+            resume_at_ms: None,
+        }
+    }
 }
 
 pub struct AppCore {
@@ -91,6 +108,8 @@ impl AppCore {
                 last_switch_ms: 0,
                 switches_count: 0,
                 tick_count: 0,
+                paused: false,
+                resume_at_ms: None,
             }),
         })
     }
@@ -123,11 +142,31 @@ impl AppCore {
 
     pub fn start_background(self: &Arc<Self>) {
         let core = Arc::clone(self);
-        thread::spawn(move || loop {
-            if let Err(error) = core.tick() {
-                eprintln!("rule engine tick error: {error}");
+        thread::spawn(move || {
+            log::info!("background rule engine thread started");
+            loop {
+                let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                    core.tick()
+                }));
+                match result {
+                    Ok(Ok(())) => {}
+                    Ok(Err(e)) => {
+                        log::error!("rule engine tick error: {e}");
+                    }
+                    Err(panic) => {
+                        let msg = if let Some(s) = panic.downcast_ref::<&str>() {
+                            s.to_string()
+                        } else if let Some(s) = panic.downcast_ref::<String>() {
+                            s.clone()
+                        } else {
+                            "Box<dyn Any>".to_string()
+                        };
+                        log::error!("rule engine tick panicked: {msg}");
+                        // Recover: sleep and continue rather than dying.
+                    }
+                }
+                thread::sleep(Duration::from_secs(1));
             }
-            thread::sleep(Duration::from_secs(1));
         });
     }
 
@@ -161,6 +200,17 @@ impl AppCore {
     }
 
     pub fn set_power_plan(&self, plan_guid: String) -> Result<(), String> {
+        // Global debounce: skip any switch within 2 seconds of the last one.
+        {
+            let runtime = self.runtime.lock().map_err(|_| "failed to lock engine runtime".to_string())?;
+            let elapsed_ms = now_ms().saturating_sub(runtime.last_switch_ms);
+            if elapsed_ms < 2000 {
+                log::debug!("set_power_plan: debounce active ({elapsed_ms}ms since last switch, ignoring)");
+                return Ok(());
+            }
+        }
+
+        log::debug!("setting active power plan to {plan_guid}");
         self.power.set_active_plan(&plan_guid)?;
         let mut runtime = self
             .runtime
@@ -202,7 +252,7 @@ impl AppCore {
         if let Ok(guard) = self.data_dir.lock() {
             if let Some(dir) = guard.as_ref() {
                 if let Err(e) = crate::persist::save(dir, config) {
-                    eprintln!("[persist] failed to save config: {e}");
+                    log::error!("failed to save config: {e}");
                 }
             }
         }
@@ -221,7 +271,33 @@ impl AppCore {
             condition_met: runtime.condition_met,
             target_plan_guid: runtime.target_plan_guid.clone(),
             switches_count: runtime.switches_count,
+            paused: runtime.paused,
+            resume_at_ms: runtime.resume_at_ms,
         })
+    }
+
+    pub fn pause_engine(&self, minutes: u32) -> Result<(), String> {
+        if minutes == 0 || minutes > 30 {
+            return Err("pause minutes must be in range 1..30".to_string());
+        }
+        let resume_at = now_ms() + (minutes as u64 * 60 * 1000);
+        let mut runtime = self
+            .runtime
+            .lock()
+            .map_err(|_| "failed to lock engine runtime".to_string())?;
+        runtime.paused = true;
+        runtime.resume_at_ms = Some(resume_at);
+        Ok(())
+    }
+
+    pub fn unpause_engine(&self) -> Result<(), String> {
+        let mut runtime = self
+            .runtime
+            .lock()
+            .map_err(|_| "failed to lock engine runtime".to_string())?;
+        runtime.paused = false;
+        runtime.resume_at_ms = None;
+        Ok(())
     }
 
     fn tick(&self) -> Result<(), String> {
@@ -242,6 +318,17 @@ impl AppCore {
             .runtime
             .lock()
             .map_err(|_| "failed to lock engine runtime".to_string())?;
+
+        // Auto-resume if the pause duration has elapsed.
+        if runtime.paused {
+            if let Some(resume_at) = runtime.resume_at_ms {
+                if now_ms() >= resume_at {
+                    log::info!("pause expired, resuming rule engine");
+                    runtime.paused = false;
+                    runtime.resume_at_ms = None;
+                }
+            }
+        }
 
         runtime.window.push_back(snapshot);
         while runtime.window.len() > MAX_WINDOW_SECONDS {
@@ -268,7 +355,8 @@ impl AppCore {
         };
         runtime.target_plan_guid = target_plan_guid.clone();
 
-        if !config.enabled {
+        // Skip rule execution when paused or disabled.
+        if runtime.paused || !config.enabled {
             return Ok(());
         }
 
@@ -288,6 +376,7 @@ impl AppCore {
         }
 
         drop(runtime);
+        log::info!("switching power plan: {target_plan_guid} (cpu_avg={avg_cpu:.1}, gpu_avg={avg_gpu:.1})");
         self.power.set_active_plan(&target_plan_guid)?;
 
         let mut runtime = self
@@ -323,6 +412,8 @@ struct RuntimeState {
     last_switch_ms: u64,
     switches_count: u64,
     tick_count: u64,
+    paused: bool,
+    resume_at_ms: Option<u64>,
 }
 
 fn validate_rule_config(config: &RuleConfig) -> Result<(), String> {

@@ -84,12 +84,16 @@ fn run_powercfg<const N: usize>(args: [&str; N]) -> Result<String, String> {
     let output = command
         .args(args)
         .output()
-        .map_err(|error| format!("failed to execute powercfg: {error}"))?;
+        .map_err(|error| {
+            let msg = format!("failed to execute powercfg: {error}");
+            log::error!("{msg}");
+            msg
+        })?;
 
     if !output.status.success() {
         let stderr = decode_powercfg_text(&output.stderr);
         let stdout = decode_powercfg_text(&output.stdout);
-        return Err(format!(
+        let msg = format!(
             "powercfg failed (code {:?}): {}{}",
             output.status.code(),
             stdout.trim(),
@@ -98,7 +102,9 @@ fn run_powercfg<const N: usize>(args: [&str; N]) -> Result<String, String> {
             } else {
                 format!(" | {}", stderr.trim())
             }
-        ));
+        );
+        log::error!("{msg}");
+        return Err(msg);
     }
 
     Ok(decode_powercfg_text(&output.stdout))

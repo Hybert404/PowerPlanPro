@@ -43,6 +43,8 @@
     conditionMet: boolean;
     targetPlanGuid: string;
     switchesCount: number;
+    paused: boolean;
+    resumeAtMs: number | null;
   };
 
   type PlanSegment = {
@@ -117,6 +119,9 @@
     highLoadPlanGuid: '',
     lowLoadPlanGuid: ''
   };
+
+  let pauseMinutes = 5;
+  let pauseCountdown = '';
 
   let cpuHistory: number[] = [];
   let gpuHistory: number[] = [];
@@ -282,14 +287,57 @@
     }
   }
 
+  let switchingPlan = false;
   async function setPlan(planGuid: string) {
+    if (switchingPlan) return;
+    switchingPlan = true;
     try {
       await invoke('set_power_plan', { planGuid });
       await refreshEngineStatus();
       errorText = '';
     } catch (error) {
       errorText = error instanceof Error ? error.message : String(error);
+    } finally {
+      setTimeout(() => { switchingPlan = false; }, 500);
     }
+  }
+
+  async function applyPause() {
+    try {
+      await invoke('pause_engine', { minutes: pauseMinutes });
+      await refreshEngineStatus();
+      errorText = '';
+    } catch (error) {
+      errorText = error instanceof Error ? error.message : String(error);
+    }
+  }
+
+  async function cancelPause() {
+    try {
+      await invoke('unpause_engine');
+      await refreshEngineStatus();
+      pauseCountdown = '';
+      errorText = '';
+    } catch (error) {
+      errorText = error instanceof Error ? error.message : String(error);
+    }
+  }
+
+  function updateCountdown() {
+    if (!status?.paused || !status.resumeAtMs) {
+      pauseCountdown = '';
+      return;
+    }
+    const remaining = Math.max(0, status.resumeAtMs - Date.now());
+    if (remaining <= 0) {
+      pauseCountdown = '';
+      refreshEngineStatus().catch(() => {});
+      return;
+    }
+    const totalSec = Math.floor(remaining / 1000);
+    const min = Math.floor(totalSec / 60);
+    const sec = totalSec % 60;
+    pauseCountdown = `${min}:${sec.toString().padStart(2, '0')}`;
   }
 
   function planName(guid: string) {
@@ -306,6 +354,7 @@
     const timer = window.setInterval(() => {
       sampleUsage();
       refreshEngineStatus().catch(() => {});
+      updateCountdown();
     }, 1000);
 
     return () => {
@@ -368,7 +417,10 @@
     </div>
     <div class="card metric-card">
       <span class="metric-label">Rule Engine</span>
-      {#if config.enabled}
+      {#if status?.paused}
+        <span class="engine-badge badge-paused">⏸ Paused</span>
+        <span class="metric-sub">{pauseCountdown} remaining</span>
+      {:else if config.enabled}
         {#if status?.conditionMet}
           <span class="engine-badge badge-switching">● Triggered</span>
           <span class="metric-sub">Switches: {status?.switchesCount ?? 0}</span>
@@ -536,6 +588,45 @@
       <button class="btn" on:click={() => setPlan(config.highLoadPlanGuid)}>Apply High</button>
       <button class="btn" on:click={() => setPlan(config.lowLoadPlanGuid)}>Apply Low</button>
     </div>
+
+    <!-- Pause Rule Engine -->
+    <div class="pause-row">
+      <div class="pause-header">
+        <svg viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M3 2h4v12H3V2zm6 0h4v12H9V2z"/></svg>
+        <span class="pause-label">Pause Rule Engine</span>
+        {#if status?.paused}
+          <span class="pause-active-badge">{pauseCountdown}</span>
+        {/if}
+      </div>
+      <div class="pause-controls">
+        <input
+          class="pause-input"
+          type="number"
+          min="1"
+          max="30"
+          step="1"
+          bind:value={pauseMinutes}
+          disabled={status?.paused}
+        />
+        <span class="pause-unit">min</span>
+        <input
+          class="pause-slider"
+          type="range"
+          min="1"
+          max="30"
+          step="1"
+          bind:value={pauseMinutes}
+          disabled={status?.paused}
+          style="--pct:{((pauseMinutes - 1) / 29) * 100}%"
+        />
+        {#if status?.paused}
+          <button class="btn btn-pause-cancel" on:click={cancelPause}>Cancel</button>
+        {:else}
+          <button class="btn btn-pause" on:click={applyPause}>Pause</button>
+        {/if}
+      </div>
+    </div>
+
     <label class="autostart-row">
       <span class="autostart-icon" aria-hidden="true">
         <svg viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
@@ -1101,36 +1192,6 @@
   .perf-col  { color: #ff8060; }
   .saver-col { color: #4ad490; }
 
-  .cfg-input-wrap {
-    display: flex;
-    align-items: center;
-    gap: 5px;
-    flex: 1;
-  }
-
-  .cfg-input-wrap input,
-  .cfg-field select {
-    flex: 1;
-    min-width: 0;
-    background: rgba(255, 255, 255, 0.055);
-    border: 1px solid rgba(255, 255, 255, 0.09);
-    border-radius: 8px;
-    padding: 6px 10px;
-    font-size: 13px;
-    color: #b8cce0;
-    outline: none;
-    transition: border-color 0.2s ease, background 0.2s ease;
-    appearance: none;
-    -webkit-appearance: none;
-  }
-
-  .cfg-input-wrap input:focus,
-  .cfg-field select:focus {
-    border-color: rgba(74, 158, 255, 0.45);
-    background: rgba(74, 158, 255, 0.07);
-    box-shadow: 0 0 0 3px rgba(74, 158, 255, 0.1);
-  }
-
   .cdd-wrap {
     position: relative;
     flex: 1;
@@ -1298,11 +1359,6 @@
     cursor: pointer;
   }
 
-  select option {
-    background: #111a2a;
-    color: #b8cce0;
-  }
-
   /* ── Toggle switch ───────────────────────────── */
   .toggle {
     cursor: pointer;
@@ -1399,6 +1455,181 @@
     border-color: rgba(74, 158, 255, 0.5);
     color: #b0d4ff;
     box-shadow: 0 4px 20px rgba(74, 158, 255, 0.18);
+  }
+
+  /* ── Pause Rule Engine ───────────────────────── */
+  .badge-paused { color: #e0a040; }
+
+  .pause-row {
+    background: rgba(0, 0, 0, 0.18);
+    border: 1px solid rgba(255, 255, 255, 0.06);
+    border-radius: 12px;
+    padding: 12px 14px;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    margin-bottom: 14px;
+  }
+
+  .pause-header {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: #3a5272;
+  }
+
+  .pause-header svg {
+    width: 13px;
+    height: 13px;
+    flex-shrink: 0;
+  }
+
+  .pause-label {
+    flex: 1;
+  }
+
+  .pause-active-badge {
+    font-size: 11px;
+    font-weight: 700;
+    color: #e0a040;
+    background: rgba(224, 160, 64, 0.15);
+    border: 1px solid rgba(224, 160, 64, 0.3);
+    border-radius: 6px;
+    padding: 2px 8px;
+    letter-spacing: 0.05em;
+    font-variant-numeric: tabular-nums;
+  }
+
+  .pause-controls {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+
+  .pause-input {
+    background: rgba(255, 255, 255, 0.07);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    border-radius: 6px;
+    padding: 4px 7px;
+    font-size: 13px;
+    color: #c8ddf0;
+    outline: none;
+    transition: border-color 0.2s ease;
+    appearance: textfield;
+    -moz-appearance: textfield;
+    width: 46px;
+    text-align: center;
+  }
+
+  .pause-input::-webkit-outer-spin-button,
+  .pause-input::-webkit-inner-spin-button {
+    -webkit-appearance: none;
+    margin: 0;
+  }
+
+  .pause-input:focus {
+    border-color: rgba(224, 160, 64, 0.5);
+    background: rgba(224, 160, 64, 0.08);
+  }
+
+  .pause-input:disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
+  }
+
+  .pause-unit {
+    font-size: 12px;
+    color: #3a5272;
+    font-weight: 600;
+  }
+
+  .pause-slider {
+    -webkit-appearance: none;
+    appearance: none;
+    flex: 1;
+    height: 4px;
+    border-radius: 999px;
+    outline: none;
+    cursor: pointer;
+    border: none;
+    background: linear-gradient(
+      to right,
+      #e0a040 0%,
+      #e0a040 var(--pct),
+      rgba(255, 255, 255, 0.1) var(--pct),
+      rgba(255, 255, 255, 0.1) 100%
+    );
+  }
+
+  .pause-slider:disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
+  }
+
+  .pause-slider::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    width: 16px;
+    height: 16px;
+    border-radius: 50%;
+    background: #c8ddf0;
+    border: 2px solid rgba(255, 255, 255, 0.2);
+    box-shadow: 0 1px 6px rgba(0, 0, 0, 0.4);
+    transition: transform 0.15s ease, background 0.15s ease;
+  }
+
+  .pause-slider::-webkit-slider-thumb:hover {
+    transform: scale(1.2);
+    background: #fff;
+  }
+
+  .pause-slider::-moz-range-thumb {
+    width: 16px;
+    height: 16px;
+    border-radius: 50%;
+    background: #c8ddf0;
+    border: 2px solid rgba(255, 255, 255, 0.2);
+    box-shadow: 0 1px 6px rgba(0, 0, 0, 0.4);
+    cursor: pointer;
+  }
+
+  .pause-slider:disabled::-webkit-slider-thumb {
+    background: #5a7898;
+    cursor: not-allowed;
+  }
+
+  .pause-slider:disabled::-moz-range-thumb {
+    background: #5a7898;
+    cursor: not-allowed;
+  }
+
+  .btn-pause {
+    background: rgba(224, 160, 64, 0.18);
+    border-color: rgba(224, 160, 64, 0.32);
+    color: #e0a040;
+  }
+
+  .btn-pause:hover {
+    background: rgba(224, 160, 64, 0.28);
+    border-color: rgba(224, 160, 64, 0.5);
+    color: #f0c060;
+    box-shadow: 0 4px 20px rgba(224, 160, 64, 0.18);
+  }
+
+  .btn-pause-cancel {
+    background: rgba(220, 60, 40, 0.18);
+    border-color: rgba(220, 60, 40, 0.32);
+    color: #ff8060;
+  }
+
+  .btn-pause-cancel:hover {
+    background: rgba(220, 60, 40, 0.28);
+    border-color: rgba(220, 60, 40, 0.5);
+    color: #ffa080;
+    box-shadow: 0 4px 20px rgba(220, 60, 40, 0.18);
   }
 
   /* ── Autostart ───────────────────────────────── */

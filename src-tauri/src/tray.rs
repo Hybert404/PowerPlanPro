@@ -62,6 +62,7 @@ pub fn create_tray(
     active_guid: &str,
 ) -> tauri::Result<()> {
     let show_item = MenuItem::with_id(app, "show", "Show Window", true, None::<&str>)?;
+    let pause_item = MenuItem::with_id(app, "pause_15", "Pause Rule Engine for 15 min", true, None::<&str>)?;
     let quit_item = MenuItem::with_id(app, "quit", "Quit Power Plan Pro", true, None::<&str>)?;
 
     // Build plan-switch items; collect so they outlive the builder.
@@ -82,7 +83,7 @@ pub fn create_tray(
     for item in &plan_items {
         builder = builder.item(item);
     }
-    let menu = builder.separator().item(&quit_item).build()?;
+    let menu = builder.separator().item(&pause_item).item(&quit_item).build()?;
 
     let icon = try_load_icon(app, active_guid)
         .or_else(|| app.default_window_icon().cloned())
@@ -102,6 +103,9 @@ pub fn create_tray(
                     let _ = window.show();
                     let _ = window.set_focus();
                 }
+            }
+            "pause_15" => {
+                let _ = core.pause_engine(15);
             }
             "quit" => app.exit(0),
             id => {
@@ -132,10 +136,13 @@ pub fn create_tray(
 /// Called from the on_plan_changed callback registered in main.rs.
 pub fn update_tray_icon(app: &AppHandle, guid: &str) {
     let Some(tray) = app.tray_by_id("main_tray") else {
+        log::warn!("tray icon not found, cannot update");
         return;
     };
     if let Some(icon) = try_load_icon(app, guid) {
         let _ = tray.set_icon(Some(icon));
+    } else {
+        log::warn!("failed to load tray icon for plan {guid}, keeping previous icon");
     }
     let label = static_plan_label(guid);
     let _ = tray.set_tooltip(Some(&format!("Power Plan Pro \u{2014} {label}")));

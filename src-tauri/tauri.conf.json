@@ -16,9 +16,9 @@
         "decorations": false,
         "title": "Power Plan Pro",
         "width": 860,
-        "height": 840,
-        "maxWidth": 860,
-        "maxHeight": 860,
+        "height": 930,
+        "maxWidth": 870,
+        "maxHeight": 940,
         "minWidth": 600,
         "minHeight": 600,
         "backgroundColor": "#070b12"

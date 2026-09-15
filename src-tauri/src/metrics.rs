@@ -22,8 +22,11 @@ pub struct MetricsState {
 
 impl MetricsState {
     pub fn new() -> Result<Self, String> {
+        log::info!("initializing PDH metrics monitor");
+        let monitor = UsageMonitor::new()?;
+        log::info!("PDH metrics initialized (gpu_counter: {})", monitor.gpu_counter.is_some());
         Ok(Self {
-            monitor: Mutex::new(UsageMonitor::new()?),
+            monitor: Mutex::new(monitor),
         })
     }
 
