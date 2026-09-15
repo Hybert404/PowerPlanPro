@@ -27,6 +27,7 @@ bun.lock
 
 # Dev tools (icon conversion)
 src-tauri/icons/tray/ImageMagick-*/
+src-tauri/icons/tray/svg/
 
 # Agent config
 .opencode/
