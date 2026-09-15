@@ -607,7 +607,6 @@
           class="pause-input"
           type="number"
           min="1"
-          max="30"
           step="1"
           bind:value={pauseMinutes}
           disabled={status?.paused}

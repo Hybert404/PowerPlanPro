@@ -1,6 +1,6 @@
 # PowerPlanPro
 
-> A lightweight Windows desktop app that automatically manages your power plans based on real-time CPU usage. When your system is idle or under light load, PowerPlanPro keeps the CPU in a low-power state — preventing unnecessary clock boosts, reducing heat, and extending hardware longevity — while instantly switching to a performance plan the moment you need it.
+> A lightweight Windows desktop app that automatically manages your power plans based on real-time CPU and GPU usage. When your system is idle or under light load, PowerPlanPro keeps the CPU in a low-power state - preventing unnecessary clock boosts, reducing heat, and extending hardware longevity - while instantly switching to a performance plan the moment you need it.
 
 ![Windows](https://img.shields.io/badge/Windows-10%2B-0078D6?style=flat&logo=windows)
 ![Tauri](https://img.shields.io/badge/Tauri-2.x-24C8D8?style=flat&logo=tauri)
@@ -10,19 +10,29 @@
 
 ---
 
-## Features
+## Screenshots
 
-- ⚡ **Automatic power plan switching** — define low and high CPU thresholds; the app switches plans for you with cooldowns to prevent flapping
-- 📊 **Real-time CPU monitoring** — live graph with up to 10 minutes of history and selectable time-frame views (1 min / 5 min / 10 min)
-- 🔍 **Auto-detects all power plans** — discovers every power plan configured on your system, including custom ones
-- 🖱️ **Manual plan selection** — instantly switch between any detected power plan from the UI
-- 🖥️ **System tray integration** — runs quietly in the background with a tray icon that reflects the active power plan
-- 🪶 **Minimal resource usage** — lightweight native app with near-zero CPU and memory overhead at idle
-- 🔄 **External plan detection** — syncs state when you or another tool changes the active plan outside the app
-- ⏸️ **Pause rule engine** — temporarily pause automatic switching for 1–30 minutes, with a quick-access tray menu shortcut
-- 🚀 **Start with Windows** — optional autostart via the Windows registry
+<table>
+  <tr>
+    <td><img src="screenshots/1.jpg" alt="Main UI" width="100%"></td>
+    <td><img src="screenshots/2.jpg" alt="Settings" width="100%"></td>
+    <td><img src="screenshots/3.jpg" alt="System Tray" width="100%"></td>
+  </tr>
+</table>
 
 ---
+
+## Features
+
+- ⚡ **Automatic power plan switching** - define CPU/GPU thresholds; the app switches plans for you with cooldowns to prevent flapping
+- 📊 **Real-time CPU & GPU monitoring** - live graph with up to 15 minutes of history and selectable time-frame views (1 min / 5 min / 15 min)
+- 🔍 **Auto-detects all power plans** - discovers every power plan configured on your system, including custom ones
+- 🖱️ **Manual plan selection** - instantly switch between any detected power plan from the UI
+- 🖥️ **System tray integration** - runs quietly in the background with a tray icon that reflects the active power plan
+- 🪶 **Minimal resource usage** - lightweight native app with near-zero CPU and memory overhead at idle
+- 🔄 **External plan detection** - syncs state when you or another tool changes the active plan outside the app
+- ⏸️ **Pause rule engine** - temporarily pause automatic switching for up to 24 hours, with a quick-access tray menu shortcut
+- 🚀 **Start with Windows** - optional autostart via the Windows registry
 
 ---
 
@@ -34,7 +44,7 @@
 | Desktop framework | [Tauri 2](https://tauri.app) |
 | Backend | Rust (Edition 2021) |
 | Build tool | [Bun](https://bun.sh) + Vite 7 |
-| Windows APIs | PDH (CPU metrics), `powercfg`, WinReg |
+| Windows APIs | PDH (CPU & GPU metrics), `powercfg`, WinReg |
 
 The entire app ships as a single native Windows executable with no Electron and no Node.js runtime required.
 
@@ -54,6 +64,7 @@ PowerPlanPro/
 │       ├── metrics.rs              # CPU/GPU sampling via Windows PDH
 │       ├── power.rs                # Power plan management via powercfg
 │       ├── tray.rs                 # System tray menu and icons
+│       ├── logging.rs              # File logging with timestamps
 │       ├── autostart.rs            # Windows registry autostart
 │       └── persist.rs              # Config serialization
 ├── index.html
@@ -69,7 +80,7 @@ PowerPlanPro/
 - **Windows 10 or later**
 - [Rust](https://www.rust-lang.org/tools/install) (stable toolchain)
 - [Bun](https://bun.sh) (package manager / runtime)
-- Microsoft C++ Build Tools (required by Tauri — included with Visual Studio)
+- Microsoft C++ Build Tools (required by Tauri - included with Visual Studio)
 
 ---
 
@@ -125,12 +136,12 @@ Output goes to `dist/`.
 
 ## How It Works
 
-A background Rust thread ticks every second, sampling CPU usage via the Windows Performance Data Helper (PDH) API. The **rule engine** compares the current usage against your configured thresholds:
+A background Rust thread ticks every second, sampling CPU and GPU usage via the Windows Performance Data Helper (PDH) API. The **rule engine** compares the current usage against your configured thresholds (with And/Or condition mode):
 
-- If CPU drops **below** the low threshold → switch to the low-load power plan
-- If CPU rises **above** the high threshold → switch to the high-load power plan
+- If usage drops **below** the low threshold → switch to the low-load power plan
+- If usage rises **above** the high threshold → switch to the high-load power plan
 
-A cooldown timer prevents the engine from thrashing between plans during brief spikes. The registry is polled every ~3 seconds to detect external plan changes and keep the UI in sync. The frontend communicates with the backend over Tauri's IPC bridge using commands like `set_power_plan` and `get_engine_status`.
+A configurable cooldown timer prevents the engine from thrashing between plans during brief spikes. The registry is polled every ~3 seconds to detect external plan changes and keep the UI in sync. The frontend communicates with the backend over Tauri's IPC bridge using commands like `set_power_plan` and `get_engine_status`.
 
 ---
 
@@ -141,10 +152,13 @@ All settings are accessible from the in-app Settings panel and are persisted to 
 | Setting | Description |
 |---|---|
 | Enable automatic switching | Turns the rule engine on or off |
-| Low CPU threshold | Below this % → switch to the low-load plan |
-| High CPU threshold | Above this % → switch to the high-load plan |
-| Low-load plan | Power plan to activate when CPU usage is low |
-| High-load plan | Power plan to activate when CPU usage is high |
+| Condition mode | And (both CPU & GPU must meet thresholds) or Or (either one) |
+| CPU threshold | CPU usage % trigger for switching |
+| GPU threshold | GPU usage % trigger for switching |
+| Duration | Number of seconds to average over before deciding |
+| Cooldown | Minimum seconds between automatic switches |
+| Low-load plan | Power plan to activate when usage is low |
+| High-load plan | Power plan to activate when usage is high |
 | Start with Windows | Register autostart entry in the Windows registry |
 
 ---

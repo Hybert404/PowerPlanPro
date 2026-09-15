@@ -30,3 +30,6 @@ src-tauri/icons/tray/ImageMagick-*/
 
 # Agent config
 .opencode/
+
+# Screenshots
+screenshots/

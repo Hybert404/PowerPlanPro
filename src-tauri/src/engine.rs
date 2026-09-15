@@ -278,8 +278,8 @@ impl AppCore {
     }
 
     pub fn pause_engine(&self, minutes: u32) -> Result<(), String> {
-        if minutes == 0 || minutes > 30 {
-            return Err("pause minutes must be in range 1..30".to_string());
+        if minutes == 0 || minutes > 1440 {
+            return Err("pause minutes must be in range 1..1440".to_string());
         }
         let resume_at = now_ms() + (minutes as u64 * 60 * 1000);
         let mut runtime = self

@@ -1,7 +1,7 @@
 {
   "name": "power-plan-pro",
   "version": "1.0.0",
-  "description": "Auto-start Windows app for managing power plans based on CPU usage",
+  "description": "Auto-switch Windows power plans based on CPU/GPU usage",
   "type": "module",
   "dependencies": {
     "@tauri-apps/api": "^2.8.0"
