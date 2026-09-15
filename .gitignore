@@ -22,8 +22,7 @@ Thumbs.db
 # Logs
 *.log
 
-# Lock files
-bun.lock
+
 
 # Dev tools (icon conversion)
 src-tauri/icons/tray/ImageMagick-*/
