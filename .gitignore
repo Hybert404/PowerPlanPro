@@ -32,5 +32,4 @@ src-tauri/icons/tray/svg/
 # Agent config
 .opencode/
 
-# Screenshots
-screenshots/
+
